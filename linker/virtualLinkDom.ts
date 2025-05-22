@@ -3,6 +3,10 @@ import { LinkerPluginSettings } from 'main';
 import { TFile } from 'obsidian';
 
 export class VirtualMatch {
+    private searchInput: HTMLInputElement | null;
+    private virtualLinks: HTMLAnchorElement[];
+    private originalTexts: Map<HTMLAnchorElement, string>;
+
     constructor(
         public id: number,
         public originText: string,
@@ -12,15 +16,77 @@ export class VirtualMatch {
         public isAlias: boolean,
         public isSubWord: boolean,
         public settings: LinkerPluginSettings
-    ) {}
+    ) {
+        this.searchInput = document.querySelector('.search-input-container.document-search-input input');
+        const virtualLinksAnchors = Array.from(document.querySelectorAll('.internal-link.virtual-link-a'));
+        this.virtualLinks = virtualLinksAnchors.filter((el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement);
+        this.originalTexts = new Map();
+        this.virtualLinks.forEach((a) => {
+            this.originalTexts.set(a, a.textContent ?? '');
+        });
+
+        // Run highlight initially
+        this.highlightVirtualLinks();
+
+        // Observe DOM changes to detect when the search input is displayed
+        const observer = new MutationObserver(() => {
+            const input = document.querySelector('.search-input-container.document-search-input input');
+            if (input && input !== this.searchInput) {
+                this.searchInput = input as HTMLInputElement;
+                this.highlightVirtualLinks();
+                this.searchInput.addEventListener('input', () => this.highlightVirtualLinks());
+            }
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if (this.searchInput) {
+                // Run highlight when DOM is loaded
+                this.highlightVirtualLinks();
+                // Add listener for future changes
+                this.searchInput.addEventListener('input', () => this.highlightVirtualLinks());
+            }
+        });
+    }
 
     /////////////////////////////////////////////////
     // DOM methods
     /////////////////////////////////////////////////
 
+    highlightVirtualLinks(): void {
+        if (this.searchInput) {
+            const query = this.searchInput.value;
+            const regex = query ? new RegExp(`(${this.escapeRegex(query)})`, 'gi') : null;
+
+            // Always get the latest set of virtual links
+            const virtualLinksAnchors = Array.from(document.querySelectorAll('.internal-link.virtual-link-a'));
+            this.virtualLinks = virtualLinksAnchors.filter((el): el is HTMLAnchorElement => el instanceof HTMLAnchorElement);
+
+            // Update originalTexts for any new links
+            this.virtualLinks.forEach((a) => {
+                if (!this.originalTexts.has(a)) {
+                    this.originalTexts.set(a, a.textContent ?? '');
+                }
+            });
+
+            this.virtualLinks.forEach((a) => {
+                const originalText = this.originalTexts.get(a) ?? '';
+                if (!query || !regex) {
+                    a.innerHTML = originalText;
+                } else {
+                    a.innerHTML = originalText.replace(regex, '<span class="obsidian-search-match-highlight">$1</span>');
+                }
+            });
+        }
+    }
+
+    escapeRegex(text: string): string {
+        return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
     getCompleteLinkElement() {
         const span = this.getLinkRootSpan();
-        const firstPath = this.files.length > 0 ? this.files[0].path: ""; 
+        const firstPath = this.files.length > 0 ? this.files[0].path : '';
         span.appendChild(this.getLinkAnchorElement(this.originText, firstPath));
         if (this.files.length > 1) {
             if (!this.isSubWord) {
@@ -65,8 +131,6 @@ export class VirtualMatch {
         }
 
         files = files ?? this.files;
-
-
 
         files.forEach((file, index) => {
             if (index === 0) {
